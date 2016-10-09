@@ -1,0 +1,20 @@
+{
+  "name": "cadensor",
+  "version": "0.1.0",
+  "description": "cadence sensor for mobile devices",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "browserify": "latest",
+    "derequire": "latest"
+  },
+  "main": "build/cadensor.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "browserify src/main.js | derequire > build/cadensor.js"
+  },
+  "authors": [
+    "giladaya"
+  ],
+  "license": "ISC"
+}

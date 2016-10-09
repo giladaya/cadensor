@@ -1,0 +1,1 @@
+window.Cadensor = require('./sensor.js');

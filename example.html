@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadensor example</title>
+    <style type="text/css">
+      body {
+        font-family: sans-serif;
+      }
+      li {
+        margin-bottom: 20px;
+      }
+    </style>
+    <script src="build/cadensor.js?6"></script>
+  </head>
+  <body>
+    <div>Cadence: <span id="spm">-</span></div>
+    <script>
+      // var Cadensor = require('cadensor');
+      var cadensor = new Cadensor();
+      var el = document.getElementById('spm');
+
+      tick();
+
+      function tick() {
+        setTimeout(tick, 500);
+        var val = cadensor.getValue();
+        el.innerHTML = val;
+      }
+    </script>
+  </body>
