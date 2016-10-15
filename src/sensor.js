@@ -2,38 +2,48 @@
 
 var FFT = require('./fft.js');
 
-module.exports = function cadenceSensor(options){
-  var NUM_SAMPLES = 64; //number of samples to consider
+module.exports = function cadenceSensor(config){
+  var NUM_SAMPLES = 128; //number of samples to consider
   var calibrationThreshold = 0.5; //amplitude threshold to perform calibration
 
   var options = {
-    algorithm: 'zero-cross', //which algorithm to use
+    algorithm: 'zero-cross', //which algorithm to use (zero-cross or fft)
     axis: 'y',
-    sample_rate: 10,   //10Hz sample rate
-    max_freq: 5,       //max frequency (low pass filter)
-    amp_thresh: 2,     //samples amplitude threshold (we want to see some motion)
-    smooth_alpha: 0.1, //alpha value for low-pass smoothing
+    max_stride_freq: 5,      //max stride frequency (low pass filter)
+    acc_amp_thresh: 2,       //samples acceleration amplitude threshold (we want to see some motion)
+    smooth_alpha: 0.1,       //alpha value for low-pass smoothing
+    smooth_alpha_rising: 0.7,       //alpha value for smoothing when SPM value is getting higher
+    smooth_alpha_falling: 0.1,      //alpha value for smoothing when SPM value is getting lower
+    fft_mag_threshold: 1.0,  //fft result magnitude reliability threshold (ignore below this)
 
-    multiplier: 1.0,   //multiplier for calculated cadence
+    multiplier: 1.0,         //multiplier for calculated cadence
   }
 
   //utility vars
-  var interval; //sampling interval
+  var sampleIntervalMS; //sampling interval in milli seconds
   var samples = []; 
-  var timestamp = 0;
+  var lastSampleTimestamp = -1;
+  var rawSampleRate = null;  //sample rate we get from device
+  var sampleRateSamples = 3; //number of samples used to calculate sample rate
+  var samplesToSkip = 0;
+  var samplesSkipped = 0;
+  var actualSampleRate = null;  //sample rate we take
+  var amplitudeCheckSamples = 10;
 
-  var fft = null;
+  //for fft algorithm
+  var fft = null; //fft object
 
-  var stepTs = 0;    //last time we detected a tstep (cross-zero)
-  var lastStrideDuration = Infinity; //used for zero-cross
-  var zeroVal = 0; //used for calibration (zero value for measured axis)
+  //for zero-cross algorithm
+  var stepTs = 0;    //last time we detected a step (cross-zero)
+  var lastStrideDuration = Infinity;
+  var zeroVal = 0;   //used for calibration (zero value for measured axis)
 
   var lastSpm = 0;   //last calculated strides per minute value
 
 
 
 
-  init(options);
+  init(config);
 
   return {
     setOptions: setOptions,
@@ -47,8 +57,6 @@ module.exports = function cadenceSensor(options){
 
   function init(options) {
     setOptions(options);
-
-    interval = 1000 / options.sample_rate;
 
     fft = new FFT(NUM_SAMPLES, options.sample_rate);
     samples = getInitArr(NUM_SAMPLES);
@@ -64,7 +72,6 @@ module.exports = function cadenceSensor(options){
   function getValue() {
     return lastSpm * options.multiplier;
   }
-
 
 
   //get Float32Array of length initialized to 0
@@ -95,35 +102,67 @@ module.exports = function cadenceSensor(options){
 
   function doSample(event) {
     var now = Date.now();
-    if ((now - timestamp) < interval) {
-      return;
+    if (lastSampleTimestamp <= 0){
+      lastSampleTimestamp = now;
+      return;  
     }
-    timestamp = now;
+    var deltaSec = (now - lastSampleTimestamp)/1000;
 
 
-    var datum = event.accelerationIncludingGravity[options.axis] || 0.5;
+    if (sampleRateSamples > 0){
+      if (rawSampleRate == null) {
+        rawSampleRate = 1 / deltaSec;
+      } else {
+        rawSampleRate = (rawSampleRate + (1 / deltaSec))/2; //Hz
+        sampleIntervalMS = 1000 / rawSampleRate;
 
-    var smoothed = smooth(samples[samples.length-1], datum, options.smooth_alpha);
-    shift(samples, smoothed);
+        var destSampleRate = 2*options.max_stride_freq;
+        samplesToSkip = Math.floor(rawSampleRate / destSampleRate) - 1;
+        sampleIntervalMS *= (samplesToSkip+1);
+        actualSampleRate = 1000/sampleIntervalMS; //Hz
+        amplitudeCheckSamples = Math.ceil(actualSampleRate); //look a second back
+      }
+      sampleRateSamples--;
+    } else {
+      if (samplesSkipped < samplesToSkip) {
+        samplesSkipped++;
+        return;
+      }
+      samplesSkipped = 0;
 
-    var freq = -1;
-    switch (options.algorithm) {
-      case 'fft':
-        freq = getFreqFft(samples);
-        break;
-      case 'zero-cross':
-        freq = getFreqCross(samples);
-        break;
+      var datum = event.accelerationIncludingGravity[options.axis] || 0.5;
+
+      var smoothed = smooth(samples[samples.length-1], datum, options.smooth_alpha);
+      shift(samples, smoothed);
+
+      var freq = -1;
+      switch (options.algorithm) {
+        case 'fft':
+          freq = getFreqFft(samples);
+          break;
+        case 'zero-cross':
+          freq = getFreqCross(samples);
+          break;
+      }
+
+      var spm = Math.round(freq*60);
+      if (spm > lastSpm) {
+        //rising
+        spm = Math.round(smooth(lastSpm, spm, options.smooth_alpha_rising));
+      } else {
+        //falling
+        spm = Math.round(smooth(lastSpm, spm, options.smooth_alpha_falling));
+      }
+      lastSpm = spm;
     }
-
-    var spm = Math.round(smooth(lastSpm, freq*60, options.smooth_alpha));
-    lastSpm = spm;
+    
+    lastSampleTimestamp = now;
   }
 
   //Get dominant frequency from samples using FFT
   function getFreqFft(samples){
-    var amplitude = getAmplitude(samples, 10);
-    if (amplitude < options.amp_thresh) {
+    var amplitude = getAmplitude(samples, amplitudeCheckSamples);
+    if (amplitude < options.acc_amp_thresh) {
       return 0;
     }
 
@@ -132,8 +171,8 @@ module.exports = function cadenceSensor(options){
     var max = -99999, 
         maxIdx = -1;
     for (var i = 1; i < fft.spectrum.length; i++ ) {
-      var freq = i * options.sample_rate / NUM_SAMPLES;
-      if (freq > options.max_freq) {
+      var freq = i * actualSampleRate / NUM_SAMPLES;
+      if (freq > options.max_stride_freq) {
         break;
       }
       if (fft.spectrum[i] > max){
@@ -142,7 +181,10 @@ module.exports = function cadenceSensor(options){
       }
     }
 
-    return maxIdx * options.sample_rate / NUM_SAMPLES;
+    if (max < options.fft_mag_threshold) {
+      return 0;
+    }
+    return maxIdx * actualSampleRate / NUM_SAMPLES;
   }
 
   function getFreqCross(samples) {
@@ -150,11 +192,13 @@ module.exports = function cadenceSensor(options){
     var oldVal = samples[samples.length-2] - zeroVal;
     var curVal = samples[samples.length-1] - zeroVal;
 
-    if (oldVal > 0 && curVal <= 0) {
-      var tmpStrideDuration = (now - stepTs - interval/2)/1000;
+    // if (oldVal > 0 && curVal <= 0) {
+    if (samples[samples.length-4] > zeroVal && samples[samples.length-3] > zeroVal && 
+        samples[samples.length-2] <= zeroVal && samples[samples.length-1] <= zeroVal) {
+      var tmpStrideDuration = (now - stepTs - sampleIntervalMS/2)/1000;
       var freq = 1.0 / tmpStrideDuration;
 
-      if (freq < options.max_freq) {
+      if (freq < options.max_stride_freq) {
         //there was a zero cross
         lastStrideDuration = tmpStrideDuration;
         stepTs = now;
@@ -165,14 +209,14 @@ module.exports = function cadenceSensor(options){
       //there was no cross
     }
 
-    var amplitude = getAmplitude(samples, 10);
-    if (amplitude < options.amp_thresh) {
+    var amplitude = getAmplitude(samples, amplitudeCheckSamples);
+    if (amplitude < options.acc_amp_thresh) {
       //we're probably motionless
       lastStrideDuration = Infinity;
 
       //good time to calibrate zero value
       if (amplitude < calibrationThreshold){
-        zeroVal = getAverage(samples, 10);
+        zeroVal = getAverage(samples, 32);
       }
 
       return 0;
