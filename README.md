@@ -1,8 +1,8 @@
 # Cadensor
 Cadence sensor for mobile devices using motion events.  
 
-Inplements two and a half algorithms for detecting repeating motion frequency:
-1. FFT
+Inplements two and a half algorithms for detecting repeating motion frequency:  
+1. FFT  
 2. Zero-Cross  
 2.1 Acceleration based  
 2.2 Velocity based
