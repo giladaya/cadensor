@@ -110,7 +110,7 @@ module.exports = function cadenceSensor(config){
   var calibrationThreshold = 0.5; //amplitude threshold to perform calibration
 
   var options = {
-    algorithm: 'zero-cross', //which algorithm to use (zero-cross or fft)
+    algorithm: 'zero-cross', //which algorithm to use (zero-cross, zero-cross-v or fft)
     axis: 'y',
     max_stride_freq: 5,      //max stride frequency (low pass filter)
     acc_amp_thresh: 2,       //samples acceleration amplitude threshold (we want to see some motion)
@@ -124,7 +124,8 @@ module.exports = function cadenceSensor(config){
 
   //utility vars
   var sampleIntervalMS; //sampling interval in milli seconds
-  var samples = []; 
+  var samples = [];     //accelerometer samples
+  var vSamples = [];    //velocity samples by integration
   var lastSampleTimestamp = -1;
   var rawSampleRate = null;  //sample rate we get from device
   var sampleRateSamples = 3; //number of samples used to calculate sample rate
@@ -150,6 +151,7 @@ module.exports = function cadenceSensor(config){
 
   return {
     setOptions: setOptions,
+    getOptions: getOptions,
     getValue: getValue
   };
 
@@ -158,11 +160,12 @@ module.exports = function cadenceSensor(config){
   // Functions
 
 
-  function init(options) {
-    setOptions(options);
+  function init(config) {
+    setOptions(config);
 
     fft = new FFT(NUM_SAMPLES, options.sample_rate);
     samples = getInitArr(NUM_SAMPLES);
+    vSamples = getInitArr(NUM_SAMPLES);
 
     window.addEventListener("devicemotion", doSample, false);
   }
@@ -170,6 +173,10 @@ module.exports = function cadenceSensor(config){
 
   function setOptions(config) {
     options = Object.assign(options, config);
+  }
+
+  function getOptions() {
+    return options;
   }
 
   function getValue() {
@@ -203,6 +210,7 @@ module.exports = function cadenceSensor(config){
     return alpha * oldVal + (1-alpha) * newVal;
   }
 
+  //Handle a new motion sensor reading
   function doSample(event) {
     var now = Date.now();
     if (lastSampleTimestamp <= 0){
@@ -213,20 +221,33 @@ module.exports = function cadenceSensor(config){
 
 
     if (sampleRateSamples > 0){
+      //Use the first several samples to calculate the device's sample rate
       if (rawSampleRate == null) {
         rawSampleRate = 1 / deltaSec;
       } else {
-        rawSampleRate = (rawSampleRate + (1 / deltaSec))/2; //Hz
-        sampleIntervalMS = 1000 / rawSampleRate;
-
-        var destSampleRate = 2*options.max_stride_freq;
-        samplesToSkip = Math.floor(rawSampleRate / destSampleRate) - 1;
-        sampleIntervalMS *= (samplesToSkip+1);
-        actualSampleRate = 1000/sampleIntervalMS; //Hz
-        amplitudeCheckSamples = Math.ceil(actualSampleRate); //look a second back
+        rawSampleRate = (rawSampleRate + (1 / deltaSec))/2; //Hz        
       }
       sampleRateSamples--;
+
+    } else if (sampleRateSamples == 0){
+      //We got all our device sample-rate related readings, 
+      //now calculate the sample-rate related parameters
+      sampleIntervalMS = 1000 / rawSampleRate;
+
+      var destSampleRate = 2*options.max_stride_freq;
+      samplesToSkip = Math.floor(rawSampleRate / destSampleRate) - 1;
+      sampleIntervalMS *= (samplesToSkip+1);
+      actualSampleRate = 1000/sampleIntervalMS; //Hz
+      amplitudeCheckSamples = Math.ceil(actualSampleRate); //look a second back
+
+      //store first sample
+      var datum = event.accelerationIncludingGravity[options.axis] || 0.5;
+      shift(samples, datum);
+
+      sampleRateSamples--;
+
     } else {
+      //normal measurments
       if (samplesSkipped < samplesToSkip) {
         samplesSkipped++;
         return;
@@ -235,7 +256,13 @@ module.exports = function cadenceSensor(config){
 
       var datum = event.accelerationIncludingGravity[options.axis] || 0.5;
 
-      var smoothed = smooth(samples[samples.length-1], datum, options.smooth_alpha);
+      if (samples[samples.length-1] != 0){ //TODO
+        //integrate to get a velocity sample
+        var velocity = vSamples[vSamples.length-1] + (datum - samples[samples.length-1])*sampleIntervalMS/1000;
+        shift(vSamples, velocity);
+      }
+
+      var smoothed = datum;//smooth(samples[samples.length-1], datum, options.smooth_alpha);
       shift(samples, smoothed);
 
       var freq = -1;
@@ -246,14 +273,17 @@ module.exports = function cadenceSensor(config){
         case 'zero-cross':
           freq = getFreqCross(samples);
           break;
+        case 'zero-cross-v':
+          freq = getFreqCross(vSamples);
+          break;
       }
 
       var spm = Math.round(freq*60);
       if (spm > lastSpm) {
-        //rising
+        //rising (usually slower than falling)
         spm = Math.round(smooth(lastSpm, spm, options.smooth_alpha_rising));
       } else {
-        //falling
+        //falling (it's possible to stop very quickly)
         spm = Math.round(smooth(lastSpm, spm, options.smooth_alpha_falling));
       }
       lastSpm = spm;

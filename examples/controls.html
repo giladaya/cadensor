@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadensor example</title>
+    <style type="text/css">
+      body {
+        font-family: sans-serif;
+      }
+      #msg {
+        font-weight: bold;
+        font-size: 200%;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Cadense sensor</h1>
+    <p>
+      Shake your device rhythmically along the selected axis.<br/>
+      Strides per minute measurement will be shown below
+    </p>
+
+    <div id="msg">Cadence (SPM): <span id="spm">-</span></div>
+
+    <hr/>
+
+    <h3>Options</h3>
+    <form id="options">
+      <p>
+        <label for="algorithm">
+          <span>Algorithm</span>
+          <select id="algorithm" name="algorithm">
+            <option value="zero-cross-v">Zero-Cross-V</option>
+            <option value="zero-cross">Zero-Cross</option>
+            <option value="FFT">FFT</option>
+          </select>
+        </label>
+      </p>
+      <p>
+        <label for="axis">
+          <span>Axis</span>
+          <select id="axis" name="axis">
+            <option value="x">X</option>
+            <option value="y" selected>Y</option>
+            <option value="z">Z</option>
+          </select>
+        </label>
+      </p>
+      <p>
+        <label for="sample_rate">
+          <span>Sample Rate</span>
+          <input type="number" min="5" max="100" step="5" value="10" id="sample_rate" name="sample_rate" required />
+        </label>
+      </p>
+      <p>
+        <label for="max_stride_freq">
+          <span>Max Frequency</span>
+          <input type="number" min="0" max="20" step="1" value="10" id="max_stride_freq" name="max_stride_freq" required />
+        </label>
+      </p>
+      <p>
+        <label for="acc_amp_thresh">
+          <span>Amp Threshold</span>
+          <input type="number" min="0" max="10" step="0.2" value="0.2" id="acc_amp_thresh" name="acc_amp_thresh" required />
+        </label>
+      </p>
+      <p>
+        <label for="multiplier">
+          <span>Multiplier</span>
+          <input type="number" min="0.2" max="5.0" step="0.2" value="1.0" id="multiplier" name="multiplier" required />
+        </label>
+      </p>
+      <p>
+        <label for="smooth_alpha">
+          <span>Smooth Alpha</span>
+          <input type="number" min="0" max="0.9" step="0.1" value="0.1" id="smooth_alpha" name="smooth_alpha" required />
+        </label>
+      </p>
+      <p>
+        <label for="smooth_alpha_rising">
+          <span>Smooth Alpha Rising</span>
+          <input type="number" min="0" max="0.9" step="0.1" value="0.1" id="smooth_alpha_rising" name="smooth_alpha_rising" required />
+        </label>
+      </p>
+      <p>
+        <label for="smooth_alpha_falling">
+          <span>Smooth Alpha Falling</span>
+          <input type="number" min="0" max="0.9" step="0.1" value="0.1" id="smooth_alpha_falling" name="smooth_alpha_falling" required />
+        </label>
+      </p>
+      <p>
+        <label for="fft_mag_threshold">
+          <span>FFT magnitude threshold</span>
+          <input type="number" min="0" max="3.0" step="0.5" value="1.0" id="fft_mag_threshold" name="fft_mag_threshold" required />
+        </label>
+      </p>
+    </form>
+
+    <script src="../build/cadensor.js?v=8"></script>
+    <script>
+      var el, form;
+      var cadensor;
+
+      if (! window.DeviceMotionEvent) {
+        document.getElementById('msg').innerHTML = '<span style="color:red;">Error: </span>Device motion events are not supported by this browser :(';
+      } else {
+        init();
+      }
+
+      function init() {
+        // var Cadensor = require('cadensor');
+        cadensor = new Cadensor({
+          // axis: 'x',
+          // algorithm: 'zero-cross-v',
+          // acc_amp_thresh: 0.2,
+          // max_stride_freq: 10
+        });
+ 
+        el = document.getElementById('spm');
+        form = document.getElementById('options');
+ 
+        form.addEventListener('change', onFormChange);
+        updateConfig(form, cadensor);
+
+        tick();
+      }
+
+      function tick() {
+        setTimeout(tick, 200);
+        var val = cadensor.getValue();
+        el.innerHTML = val;
+      }
+
+      function onFormChange(ev) {
+        updateConfig(form, cadensor);
+      }
+
+      function updateConfig(form, cadensor) {
+        var values = {};
+
+        // fetch form values
+        for (var i = 0, d, v; i < form.elements.length; i++) {
+          d = form.elements[i];
+          if (d.name && d.value) {
+            v = (d.type == "checkbox" || d.type == "radio" ? (d.checked ? d.value : '') : d.value);
+            if (v) {
+              values[d.name] = escape(v);
+            }
+          }
+        }
+
+        //update
+        cadensor.setOptions(values);
+        console.log(cadensor.getOptions());
+      }
+    </script>
+  </body>

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadensor example</title>
+    <style type="text/css">
+      body {
+        font-family: sans-serif;
+      }
+      #msg {
+        font-weight: bold;
+      }
+    </style>
+    <script src="../build/cadensor.js?v=8"></script>
+  </head>
+  <body>
+    <h1>Cadense sensor</h1>
+    <p>
+      Shake your device rhythmically along the x axis.<br/>
+      Strides per minute measurement will be shown below
+    </p>
+
+    <div id="msg">Cadence (SPM): <span id="spm">-</span></div>
+    <script>
+      if (! window.DeviceMotionEvent) {
+        document.getElementById('msg').innerHTML = '<span style="color:red;">Error: </span>Device motion events are not supported by this browser :(';
+      } else {
+        init();
+      }
+
+      function init() {
+        // var Cadensor = require('cadensor');
+        var cadensor = new Cadensor({
+          axis: 'x',
+          algorithm: 'zero-cross-v',
+          acc_amp_thresh: 0.2,
+          max_stride_freq: 10
+        });
+        var el = document.getElementById('spm');
+
+        tick();
+
+        function tick() {
+          setTimeout(tick, 200);
+          var val = cadensor.getValue();
+          el.innerHTML = val;
+        }
+      }
+    </script>
+  </body>
